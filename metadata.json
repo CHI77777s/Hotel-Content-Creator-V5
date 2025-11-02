@@ -1,0 +1,5 @@
+{
+  "name": "Hotel Content Generator V5",
+  "description": "An AI-powered tool to generate comprehensive hotel data and descriptions in German and French, based on the hotel name and country. It provides structured JSON output including address, coordinates, GIATA code, and journalistic-style descriptions.",
+  "requestFramePermissions": []
+}
