@@ -86,10 +86,13 @@ const ResultDisplay: React.FC<ResultDisplayProps> = ({ hotelData, isLoading, onD
 };
 
 
-const InfoItem: React.FC<{ icon: React.ReactNode; label: string; value: string }> = ({ icon, label, value }) => (
+// FIX: The type for the `icon` prop was too generic (`React.ReactElement`), causing a TypeScript error with `React.cloneElement`.
+// I've specified a more accurate type, `React.ReactElement<React.SVGProps<SVGSVGElement>>`, which ensures that TypeScript
+// knows `className` is a valid prop for the icon element.
+const InfoItem: React.FC<{ icon: React.ReactElement<React.SVGProps<SVGSVGElement>>; label: string; value: string }> = ({ icon, label, value }) => (
     <div className="flex items-start space-x-3">
       <div className="flex-shrink-0 text-slate-400 dark:text-slate-500 mt-1">
-        {React.cloneElement(icon as React.ReactElement, { className: 'w-5 h-5' })}
+        {React.cloneElement(icon, { className: 'w-5 h-5' })}
       </div>
       <div>
         <p className="font-semibold text-slate-700 dark:text-slate-300">{label}</p>

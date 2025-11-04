@@ -2,10 +2,11 @@ import React, { useState, useCallback, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import type { HotelData, BatchResult, BatchTask, BatchState } from './types';
 import { generateHotelContent } from './services/geminiService';
+import { fetchGiataCode } from './services/giataService';
 import InputForm from './components/InputForm';
 import ResultDisplay from './components/ResultDisplay';
 import BatchUploadForm from './components/BatchUploadForm';
-import { BotIcon, HotelIcon } from './components/Icons';
+import { BotIcon, HotelIcon, LinkIcon, PlusIcon, TrashIcon } from './components/Icons';
 
 const App: React.FC = () => {
   // State for single entry mode
@@ -20,17 +21,43 @@ const App: React.FC = () => {
   const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0 });
   const [batchError, setBatchError] = useState<string | null>(null);
   
+  // State for content source URLs
+  const [contentSources, setContentSources] = useState<string[]>(['']);
+
   // Refs to control the async processing loop
   const isPausedRef = useRef(false);
   const isAbortedRef = useRef(false);
   const currentTaskIndexRef = useRef(0);
+  
+  const handleContentSourceChange = (index: number, value: string) => {
+    const newSources = [...contentSources];
+    newSources[index] = value;
+    setContentSources(newSources);
+  };
+
+  const handleAddSource = () => {
+    setContentSources([...contentSources, '']);
+  };
+
+  const handleRemoveSource = (index: number) => {
+    const newSources = contentSources.filter((_, i) => i !== index);
+    setContentSources(newSources);
+  };
+
 
   const handleGenerate = useCallback(async (country: string, hotelName: string, city: string) => {
     setIsLoading(true);
     setError(null);
     setHotelData(null);
     try {
-      const data = await generateHotelContent(country, hotelName, city);
+      // Step 1: Fetch GIATA code first
+      const giataCode = await fetchGiataCode(hotelName, country, city);
+      if (!giataCode) {
+        throw new Error(`Could not find a GIATA code for "${hotelName}". Please check the hotel details.`);
+      }
+
+      // Step 2: Generate content using the GIATA code
+      const data = await generateHotelContent(country, hotelName, city, giataCode, contentSources);
       setHotelData(data);
     } catch (e) {
       console.error(e);
@@ -38,7 +65,7 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [contentSources]);
 
   const handlePause = useCallback(() => {
     isPausedRef.current = true;
@@ -72,7 +99,14 @@ const App: React.FC = () => {
         const task = tasks[currentIndex];
         
         try {
-            const data = await generateHotelContent(task.country, task.hotelName, task.city);
+            // Step 1: Fetch GIATA code for the current task
+            const giataCode = await fetchGiataCode(task.hotelName, task.country, task.city);
+             if (!giataCode) {
+              throw new Error(`GIATA code not found.`);
+            }
+
+            // Step 2: Generate content with the found GIATA code
+            const data = await generateHotelContent(task.country, task.hotelName, task.city, giataCode, contentSources);
             results.push({ input: task, output: data, status: 'Success' });
             currentTaskIndexRef.current++; // Move to the next task ONLY on success.
         } catch (e) {
@@ -85,7 +119,7 @@ const App: React.FC = () => {
                 // Do not increment index. The loop will continue to the top, where the `while(isPausedRef.current)`
                 // check will halt execution until the user resumes.
             } else {
-                // For any other unrecoverable error, log it and move on.
+                // For any other unrecoverable error (including GIATA lookup failure), log it and move on.
                 results.push({ input: task, output: null, status: 'Error', error: errorMessage });
                 currentTaskIndexRef.current++;
             }
@@ -97,7 +131,7 @@ const App: React.FC = () => {
         setBatchProgress({ current: tasks.length, total: tasks.length });
         setBatchState('completed');
     }
-  }, [batchResults, handlePause, setBatchError]);
+  }, [batchResults, handlePause, setBatchError, contentSources]);
 
 
   const handleProcessFile = useCallback(async (file: File) => {
@@ -287,6 +321,50 @@ const App: React.FC = () => {
             </div>
           </div>
           
+          <div className="mb-8 bg-white dark:bg-slate-800 rounded-xl shadow-lg p-6 md:p-8">
+            <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">Online Content Sources (Optional)</h3>
+            <p className="text-sm text-slate-500 dark:text-slate-400 mb-4">
+                Provide links to online catalogs or other web pages. Their content will be used as a primary source for generating descriptions, improving accuracy and style.
+            </p>
+            <div className="space-y-4">
+              {contentSources.map((source, index) => (
+                <div key={index} className="flex items-center gap-2">
+                  <div className="relative flex-grow">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                      <LinkIcon className="h-5 w-5 text-slate-400" aria-hidden="true" />
+                    </div>
+                    <input
+                      type="url"
+                      className="block w-full rounded-md border-0 py-2 pl-10 text-slate-900 dark:text-slate-200 bg-slate-50 dark:bg-slate-700 ring-1 ring-inset ring-slate-300 dark:ring-slate-600 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:ring-2 focus:ring-inset focus:ring-sky-600 sm:text-sm sm:leading-6"
+                      placeholder="https://www.example.com/catalog"
+                      value={source}
+                      onChange={(e) => handleContentSourceChange(index, e.target.value)}
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveSource(index)}
+                    className="p-2 text-slate-400 hover:text-red-500 rounded-md hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                    aria-label="Remove source"
+                  >
+                    <TrashIcon className="h-5 w-5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={handleAddSource}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-sky-600 dark:text-sky-400 bg-sky-100/60 dark:bg-sky-900/40 rounded-md hover:bg-sky-100 dark:hover:bg-sky-900/70 transition-colors"
+              >
+                <PlusIcon className="h-5 w-5" />
+                Add Source
+              </button>
+            </div>
+          </div>
+
+
           {error && (
             <div className="mb-4 bg-red-100 dark:bg-red-900/20 border-l-4 border-red-500 text-red-700 dark:text-red-300 p-4 rounded-md shadow" role="alert">
               <p className="font-bold">Error</p>

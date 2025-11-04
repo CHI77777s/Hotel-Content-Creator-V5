@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import type { HotelData } from '../types';
 
@@ -8,16 +7,19 @@ if (!process.env.API_KEY) {
 
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-const systemInstruction = `Du bist ein spezialisiertes KI-Modell zur Erstellung von Reiseinhalten und zur Beschaffung von Hotelstammdaten. Deine Hauptaufgabe besteht darin, basierend auf dem Land und dem Hotelnamen des Inputs, eine umfassende Ausgabe in einem strengen JSON-Format zu generieren.
+const systemInstruction = `Du bist ein spezialisiertes KI-Modell zur Erstellung von Reiseinhalten und zur Beschaffung von Hotelstammdaten. Deine Hauptaufgabe besteht darin, basierend auf dem Land, Hotelnamen und dem eindeutigen GIATA Code des Inputs, eine umfassende Ausgabe in einem strengen JSON-Format zu generieren.
 
-Zentrale Anforderungen:
-- Datenbeschaffung: Ermittle die vollständige Adresse, die Geokoordinaten (Latitude/Longitude), die Telefonnummer und den GIATA Code des Hotels. Ziehe als wichtige zusätzliche Quelle die Website https://www.knecht-reisen.ch/ heran, um die Daten zu verifizieren und Inhalte zu inspirieren, insbesondere wenn es um den Stil und spezifische Details geht.
-- Hotelbeschreibung (DE): Erstelle einen reisejournalistischen Hotelbeschrieb (200-300 Wörter) in deutscher Sprache, der Charakter, Stil und Lage des Hotels hervorhebt.
-- Stilvorgabe (DE): Der Text muss im begeisternden, qualitätsbewussten Stil von Knecht Reisen verfasst sein. Achte auf maximale Variation von Satzbau, Satzanfängen und Vokabular. Verwende aktiv Synonyme, um Wortwiederholungen zu vermeiden und den Text lebendiger zu gestalten.
-- Orthografie-Regel (DE): Das scharfe S (ß) muss in der gesamten deutschen Beschreibung konsequent durch ss ersetzt werden.
-- Übersetzung (FR): Übersetze den fertiggestellten deutschen Beschrieb anschliessend professionell und präzise ins Französische.
+Wichtige Anweisungen:
+1.  GIATA Code als Master-ID: Der bereitgestellte GIATA Code ist der primäre und unmissverständliche Identifikator für das Hotel. Nutze ihn, um das korrekte Hotel zu identifizieren. Gib diesen Code im Output-Feld "GIATA_Code" unverändert zurück. Du musst nicht nach einem anderen Code suchen.
+2.  Kataloge als Primärquelle: Wenn eine oder mehrere URLs zu Online-Katalogen oder Inhaltsquellen bereitgestellt werden, musst du die Inhalte unter diesen URLs als primäre und wichtigste Quellen für die Erstellung der Hotelbeschreibung verwenden.
+3.  Datenbeschaffung: Ermittle die vollständige Adresse, die Geokoordinaten (Latitude/Longitude) und die Telefonnummer des durch den GIATA Code identifizierten Hotels. Um die exakten Geokoordinaten zu ermitteln, schlage das Hotel direkt bei Google Maps nach. Dies ist entscheidend für höchste Genauigkeit.
+4.  Verifikation: Ziehe als wichtige zusätzliche Quelle die Website https://www.knecht-reisen.ch/ heran, um die aus anderen Quellen ermittelten Daten zu verifizieren und Inhalte zu inspirieren, insbesondere wenn es um den Stil und spezifische Details geht.
+5.  Hotelbeschreibung (DE): Erstelle einen reisejournalistischen Hotelbeschrieb (200-300 Wörter) in deutscher Sprache.
+6.  Stilvorgabe (DE): Der Text muss im begeisternden, qualitätsbewussten Stil von Knecht Reisen verfasst sein. Achte auf maximale Variation von Satzbau, Satzanfängen und Vokabular. Verwende aktiv Synonyme.
+7.  Orthografie-Regel (DE): Das scharfe S (ß) muss in der gesamten deutschen Beschreibung konsequent durch ss ersetzt werden.
+8.  Übersetzung (FR): Übersetze den fertiggestellten deutschen Beschrieb anschliessend professionell und präzise ins Französische.
 
-Die Ausgabe muss zwingend dem bereitgestellten JSON-Schema folgen, um eine automatische Weiterverarbeitung zu gewährleisten.`;
+Die Ausgabe muss zwingend dem bereitgestellten JSON-Schema folgen.`;
 
 
 const hotelDataSchema = {
@@ -25,7 +27,7 @@ const hotelDataSchema = {
   properties: {
     Eingabe_Land: { type: Type.STRING, description: "Das Land aus der Eingabe." },
     Eingabe_Hotelname: { type: Type.STRING, description: "Der Hotelname aus der Eingabe." },
-    GIATA_Code: { type: Type.STRING, description: "Der eindeutige GIATA Code des Hotels. Wenn nicht gefunden, 'N/A' zurückgeben." },
+    GIATA_Code: { type: Type.STRING, description: "Der eindeutige GIATA Code des Hotels, wie er im Input bereitgestellt wurde." },
     Adresse_Strasse: { type: Type.STRING, description: "Die vollständige Strasse und Hausnummer/Adresse." },
     PLZ: { type: Type.STRING, description: "Die Postleitzahl (falls vorhanden)." },
     Ort: { type: Type.STRING, description: "Die Stadt oder der nächste bewohnte Ort." },
@@ -38,10 +40,17 @@ const hotelDataSchema = {
   required: ["Eingabe_Land", "Eingabe_Hotelname", "GIATA_Code", "Adresse_Strasse", "PLZ", "Ort", "Telefon", "Latitude", "Longitude", "Beschreibung_DE", "Beschreibung_FR"]
 };
 
-export const generateHotelContent = async (country: string, hotelName: string, city?: string): Promise<HotelData> => {
-  let prompt = `Bitte generiere die Daten für das folgende Hotel:\nLand: ${country}\nHotelname: ${hotelName}`;
+export const generateHotelContent = async (country: string, hotelName: string, city: string | undefined, giataCode: string, contentSources?: string[]): Promise<HotelData> => {
+  let prompt = `Bitte generiere die Daten für das folgende Hotel:\nLand: ${country}\nHotelname: ${hotelName}\nGIATA Code: ${giataCode}`;
   if (city && city.trim() !== '') {
-    prompt = `Bitte generiere die Daten für das folgende Hotel:\nLand: ${country}\nStadt: ${city}\nHotelname: ${hotelName}`;
+    prompt += `\nStadt: ${city}`;
+  }
+
+  if (contentSources && contentSources.length > 0) {
+    const validSources = contentSources.filter(url => url && url.trim() !== '');
+    if (validSources.length > 0) {
+      prompt += `\n\nNutze die folgenden Online-Kataloge/Quellen als primäre Quelle für die Beschreibung:\n${validSources.map(url => `- ${url}`).join('\n')}`;
+    }
   }
 
   try {
@@ -67,9 +76,11 @@ export const generateHotelContent = async (country: string, hotelName: string, c
     return jsonData as HotelData;
   } catch (error) {
     console.error("Error calling Gemini API:", error);
-    if (error.message.includes('429')) {
-      throw new Error("API rate limit exceeded. Please try again later.");
+
+    if (error.message && error.message.includes('429')) {
+        throw new Error("API rate limit exceeded. Please try again later.");
     }
+    
     throw new Error("Failed to generate hotel content. The model might not have found the requested hotel or an API error occurred.");
   }
 };
